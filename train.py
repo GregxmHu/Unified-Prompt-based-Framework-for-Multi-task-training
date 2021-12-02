@@ -1,4 +1,5 @@
 ############################################################################################################
+from re import template
 from transformers import T5ForConditionalGeneration, T5Tokenizer
 from mnli_dataloader import MNLIDataLoader
 from mnli_dataset import MNLIDataset
@@ -36,12 +37,16 @@ def test(args, model, test_loader, device, tokenizer):
     total=0
     right=0
     for test_batch in tqdm(test_loader, disable=args.local_rank not in [-1, 0]):
-        #query_id, doc_id, label= test_batch[''], test_batch['doc_id'], test_batch['label']
+        #hypothesis_id, premise_id, label= test_batch[''], test_batch['premise_id'], test_batch['label']
         with torch.no_grad():
             batch_score = model(
                     input_ids=test_batch['input_ids'].to(device), 
-                    attention_mask=test_batch['attention_mask'].to(device), 
-                    decoder_input_ids=test_batch['decoder_input_ids'].to(device),
+                    attention_mask=test_batch['attention_mask'].to(device),
+                    hypothesis_ids=test_batch['hypothesis_ids'].to(device), 
+                    premise_ids=test_batch['premise_ids'].to(device),
+                    hypothesis_attention_mask=test_batch['hypothesis_attention_mask'].to(device),
+                    premise_attention_mask=test_batch['premise_attention_mask'].to(device),
+                    labels=test_batch['labels'].to(device)
                     )
             predict=torch.argmax(batch_score,dim=1)
             label=test_batch['label'].to(device)
@@ -54,12 +59,16 @@ def dev(args, model, dev_loader, device, tokenizer):
     total=0
     right=0
     for dev_batch in tqdm(dev_loader, disable=args.local_rank not in [-1, 0]):
-        #query_id, doc_id, label= dev_batch[''], dev_batch['doc_id'], dev_batch['label']
+        #hypothesis_id, premise_id, label= dev_batch[''], dev_batch['premise_id'], dev_batch['label']
         with torch.no_grad():
             batch_score = model(
                     input_ids=dev_batch['input_ids'].to(device), 
-                    attention_mask=dev_batch['attention_mask'].to(device), 
-                    decoder_input_ids=dev_batch['decoder_input_ids'].to(device),
+                    attention_mask=dev_batch['attention_mask'].to(device),
+                    hypothesis_ids=dev_batch['hypothesis_ids'].to(device), 
+                    premise_ids=dev_batch['premise_ids'].to(device),
+                    hypothesis_attention_mask=dev_batch['hypothesis_attention_mask'].to(device),
+                    premise_attention_mask=dev_batch['premise_attention_mask'].to(device),
+                    labels=dev_batch['labels'].to(device)
                     )
             predict=torch.argmax(batch_score,dim=1)
             label=dev_batch['label'].to(device)
@@ -91,11 +100,15 @@ def train(args, model, loss_fn, m_optim, m_scheduler, train_loader, dev_loader, 
             with sync_context():
                 batch_score = model(
                     input_ids=train_batch['input_ids'].to(device), 
-                    attention_mask=train_batch['attention_mask'].to(device), 
-                    decoder_input_ids=train_batch['decoder_input_ids'].to(device),
+                    attention_mask=train_batch['attention_mask'].to(device),
+                    hypothesis_ids=train_batch['hypothesis_ids'].to(device), 
+                    premise_ids=train_batch['premise_ids'].to(device),
+                    hypothesis_attention_mask=train_batch['hypothesis_attention_mask'].to(device),
+                    premise_attention_mask=train_batch['premise_attention_mask'].to(device),
+                    labels=train_batch['labels'].to(device)
                     )
             with sync_context():
-                batch_loss = loss_fn(batch_score, train_batch['label'].to(device))
+                batch_loss = loss_fn(batch_score, train_batch['label_id'].to(device))
 
             if args.n_gpu > 1:
                 batch_loss = batch_loss.mean()
@@ -257,6 +270,11 @@ def main():
     parser.add_argument('-tau', type=float, default=1)
     parser.add_argument('-n_kernels', type=int, default=21)
     parser.add_argument('-right',type=int,default=0)
+    parser.add_argument("-template",type=str,default="")
+    parser.add_argument("--soft_prompt", action="store_true")
+    parser.add_argument("--infix",type=str,default=None)
+    parser.add_argument("--suffix",type=str,default=None)
+    parser.add_argument("--prefix",type=str,default=None)
     args = parser.parse_args()
     set_seed(13)
     set_dist_args(args) # get local cpu/gpu device
@@ -268,11 +286,11 @@ def main():
 
     tokenizer = T5Tokenizer.from_pretrained(args.vocab)
     logger.info('reading training data...')
-    train_set=MNLIDataset(dataset=args.train,tokenizer=tokenizer)
+    train_set=MNLIDataset(dataset=args.train,tokenizer=tokenizer,template=args.template)
     logger.info('reading dev data...')
-    dev_set=MNLIDataset(dataset=args.dev,tokenizer=tokenizer, max_input=2000)
+    dev_set=MNLIDataset(dataset=args.dev,tokenizer=tokenizer, max_input=2000,template=args.template)
     logger.info('reading test data...')
-    test_set=MNLIDataset(dataset=args.tset,tokenizer=tokenizer, max_input=100000)
+    test_set=MNLIDataset(dataset=args.tset,tokenizer=tokenizer, max_input=100000,template=args.template)
     if args.local_rank != -1:
         
         train_sampler = DistributedSampler(train_set)
@@ -301,7 +319,7 @@ def main():
         )
         dist.barrier()
 
-    model = MNLIT5(args.pretrain)
+    model = MNLIT5(args.pretrain,args.soft_prompt,args.prefix,args.infix,args.suffix)
 
     device = args.device
     loss_fn = nn.CrossEntropyLoss()
