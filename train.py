@@ -32,7 +32,22 @@ import json
 import os
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
-# writer = SummaryWriter(log_dir='logs')
+def test(args, model, test_loader, device, tokenizer):
+    total=0
+    right=0
+    for test_batch in tqdm(test_loader, disable=args.local_rank not in [-1, 0]):
+        #query_id, doc_id, label= test_batch[''], test_batch['doc_id'], test_batch['label']
+        with torch.no_grad():
+            batch_score = model(
+                    input_ids=test_batch['input_ids'].to(device), 
+                    attention_mask=test_batch['attention_mask'].to(device), 
+                    decoder_input_ids=test_batch['decoder_input_ids'].to(device),
+                    )
+            predict=torch.argmax(batch_score,dim=1)
+            label=test_batch['label'].to(device)
+            total+=len(label)
+            right+=torch.eq(predict,label).sum()
+    return total, right
 
 
 def dev(args, model, dev_loader, device, tokenizer):
@@ -41,30 +56,15 @@ def dev(args, model, dev_loader, device, tokenizer):
     for dev_batch in tqdm(dev_loader, disable=args.local_rank not in [-1, 0]):
         #query_id, doc_id, label= dev_batch[''], dev_batch['doc_id'], dev_batch['label']
         with torch.no_grad():
-            if args.original_t5:
-                output_sequences = model.module.generate(
-                    input_ids=dev_batch['input_ids'].to(device),
-                    attention_mask=dev_batch['attention_mask'].to(device),
-                    do_sample=False, # disable sampling to test if batching affects output
-                )
-                batch_result = tokenizer.batch_decode(output_sequences, skip_special_tokens=True)
-                # print(batch_result)
-                true_result = dev_batch["raw_label"]
-                total += len(true_result)
-                for br, tr in zip(batch_result, true_result):
-                    if br == tr:
-                        right += 1
-            else:
-                batch_score = model(
-                        input_ids=dev_batch['input_ids'].to(device), 
-                        attention_mask=dev_batch['attention_mask'].to(device), 
-                        decoder_input_ids=dev_batch['decoder_input_ids'].to(device),
-                        )
-                predict=torch.argmax(batch_score,dim=1)
-                label=dev_batch['label'].to(device)
-                total+=len(label)
-                right+=torch.eq(predict,label).sum()
-    # return int(total),int(right.detach().cpu())
+            batch_score = model(
+                    input_ids=dev_batch['input_ids'].to(device), 
+                    attention_mask=dev_batch['attention_mask'].to(device), 
+                    decoder_input_ids=dev_batch['decoder_input_ids'].to(device),
+                    )
+            predict=torch.argmax(batch_score,dim=1)
+            label=dev_batch['label'].to(device)
+            total+=len(label)
+            right+=torch.eq(predict,label).sum()
     return total, right
 
 
@@ -75,7 +75,7 @@ def batch_to_device(batch, device):
     return device_batch
             
 
-def train(args, model, loss_fn, m_optim, m_scheduler, train_loader, dev_loader, device, train_sampler=None, tokenizer=None):
+def train(args, model, loss_fn, m_optim, m_scheduler, train_loader, dev_loader, test_loader,device, train_sampler=None, tokenizer=None):
     best_mes = 0.0
     global_step = 0 # steps that outside epoches
     force_break = False
@@ -88,22 +88,14 @@ def train(args, model, loss_fn, m_optim, m_scheduler, train_loader, dev_loader, 
         for step, train_batch in enumerate(train_loader):
             # print("Before: global step {}, rank {}".format(global_step, args.local_rank))
             sync_context = model.no_sync if (args.local_rank != -1 and (step+1) % args.gradient_accumulation_steps != 0) else nullcontext
-            if args.original_t5:
-                with sync_context():
-                    batch_loss = model(                        
-                        input_ids=train_batch['input_ids'].to(device), 
-                        attention_mask=train_batch['attention_mask'].to(device), 
-                        labels=train_batch["labels"].to(device)
-                    ).loss
-            else:
-                with sync_context():
-                    batch_score = model(
-                        input_ids=train_batch['input_ids'].to(device), 
-                        attention_mask=train_batch['attention_mask'].to(device), 
-                        decoder_input_ids=train_batch['decoder_input_ids'].to(device),
-                        )
-                with sync_context():
-                    batch_loss = loss_fn(batch_score, train_batch['label'].to(device))
+            with sync_context():
+                batch_score = model(
+                    input_ids=train_batch['input_ids'].to(device), 
+                    attention_mask=train_batch['attention_mask'].to(device), 
+                    decoder_input_ids=train_batch['decoder_input_ids'].to(device),
+                    )
+            with sync_context():
+                batch_loss = loss_fn(batch_score, train_batch['label'].to(device))
 
             if args.n_gpu > 1:
                 batch_loss = batch_loss.mean()
@@ -138,10 +130,10 @@ def train(args, model, loss_fn, m_optim, m_scheduler, train_loader, dev_loader, 
                         total,right=dev(args, model, dev_loader, device, tokenizer)
                     model.train()
 
+                    with open(args.res,'a+') as f:
+                        f.write(json.dumps({'total':total,'right':right}))
+                        f.write('\n')
                     if args.local_rank != -1:
-                        with open(args.res,'a+') as f:
-                            f.write(json.dumps({'total':total,'right':right}))
-                            f.write('\n')
                         dist.barrier()
                     if args.local_rank in [-1,0]:
                         with open(args.res,'r') as f:
@@ -151,8 +143,21 @@ def train(args, model, loss_fn, m_optim, m_scheduler, train_loader, dev_loader, 
                                 t+=eval(line)['total']
                                 print(r,t)
                             mes=r/t
-                        os.remove(args.res)
-                        best_mes = mes if mes >= best_mes else best_mes
+                        os.remove(args.res)#logger.info('save_model at step {}'.format(global_step+1))
+                        if not os.path.exists(args.save):
+                                os.makedirs(args.save)
+                        if mes>best_mes:
+                            best_mes=mes
+                            ls=os.listdir(args.save)
+                            for i in ls:
+                                item_path=os.path.join(args.save,i)
+                                logger.info('remove_model at step {}'.format(global_step+1))
+                                logger.info('save model')
+                                os.remove(item_path)
+                            if hasattr(model, "module"):
+                                torch.save(model.module.state_dict(), args.save + "_step-{}.bin".format(global_step+1))
+                            else:
+                                torch.save(model.state_dict(), args.save + "_step-{}.bin".format(global_step+1))
                         logger.info("global step: {}, messure: {}, best messure: {}".format(global_step+1, mes, best_mes))
                 
                 global_step += 1
@@ -160,32 +165,79 @@ def train(args, model, loss_fn, m_optim, m_scheduler, train_loader, dev_loader, 
                 if args.max_steps is not None and global_step == args.max_steps:
                     force_break = True
                     break
-            # print("After: global step {}, rank {}".format(global_step, args.local_rank))
+
             if args.local_rank != -1:
                 dist.barrier()
-            # print("After barrier: global step {}, rank {}".format(global_step, args.local_rank))
-        # print("After epoch: global step {}, rank {}".format(global_step, args.local_rank))
+
         if args.local_rank != -1:
             dist.barrier()
-        # print("After epoch barrier: global step {}, rank {}".format(global_step, args.local_rank))
         if force_break:
             break
     if args.local_rank != -1:
         dist.barrier()
-    # print("Finish training. {}".format(args.local_rank))
+        logger.info("load best checkpoint....")
+        dist.barrier()
+        for file in os.listdir(args.save):
+            checkpoint=os.path.join(args.save,file)
+            state=torch.load(checkpoint,map_location=device)
+            model.module.load_state_dict(state)
+        dist.barrier()
+    else:
+        logger.info("load best checkpoint....")
+        for file in os.listdir(args.save):
+            checkpoint=os.path.join(args.save,file)
+            state=torch.load(checkpoint,map_location=device)
+            model.load_state_dict(state)
+    logger.info("doing inference.... at gpu:{}".format(args.local_rank))
+    model.eval()
+    if args.local_rank != -1:
+        dist.barrier()
+    with torch.no_grad():
+        total,right = test(args, model,test_loader, device,tokenizer=tokenizer)
+    if args.local_rank != -1:
+        logger.info("inference finished...at gpu:{}".format(args.local_rank))
+        dist.barrier()
+    else:
+        logger.info("inference finished...")
+    with open(args.res,'a+') as f:
+        f.write(json.dumps({'total':total,'right':right}))
+        f.write('\n')
+    if args.local_rank != -1:
+        dist.barrier()
+    if args.local_rank in [-1,0]:
+        with open(args.res,'r') as f:
+            r,t=0,0
+            for line in f:
+                r+=eval(line)['right']
+                t+=eval(line)['total']
+                print(r,t)
+            mes=r/t
+            print("test_acc:{}".format(mes))
+    if args.local_rank !=-1:
+        dist.barrier()
+    dist.barrier()
 
+    return 
 
+def set_seed(seed):
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('-optimizer', type=str, default='adam')
     parser.add_argument('-train', type=str, default='./data/train_toy.jsonl')
+    parser.add_argument('-dev', type=str, default='./data/dev_toy.jsonl')
+    parser.add_argument('-test', type=str, default='./data/dev_toy.jsonl')
     parser.add_argument('-max_input', type=int, default=1280000)
     parser.add_argument('-save', type=str, default='./checkpoints/bert.bin')
-    parser.add_argument('-dev', type=str, default='./data/dev_toy.jsonl')
     parser.add_argument('-vocab', type=str, default='allenai/scibert_scivocab_uncased')
     parser.add_argument('-pretrain', type=str, default='allenai/scibert_scivocab_uncased')
     parser.add_argument('-checkpoint', type=str, default=None)
     parser.add_argument('-res', type=str, default='./results/bert.trec')
+    parser.add_argument('-test_res', type=str, default='./results/bert.trec')
     parser.add_argument('-epoch', type=int, default=1)
     parser.add_argument('-batch_size', type=int, default=8)
     parser.add_argument('-dev_eval_batch_size', type=int, default=128)
@@ -205,8 +257,8 @@ def main():
     parser.add_argument('-tau', type=float, default=1)
     parser.add_argument('-n_kernels', type=int, default=21)
     parser.add_argument('-right',type=int,default=0)
-    parser.add_argument("--original_t5", action="store_true")
     args = parser.parse_args()
+    set_seed(13)
     set_dist_args(args) # get local cpu/gpu device
     if args.log_dir is not None:
         writer = SummaryWriter(args.log_dir)
@@ -218,8 +270,9 @@ def main():
     logger.info('reading training data...')
     train_set=MNLIDataset(dataset=args.train,tokenizer=tokenizer)
     logger.info('reading dev data...')
-    dev_set=MNLIDataset(dataset=args.dev,tokenizer=tokenizer, max_input=200)
-
+    dev_set=MNLIDataset(dataset=args.dev,tokenizer=tokenizer, max_input=2000)
+    logger.info('reading test data...')
+    test_set=MNLIDataset(dataset=args.tset,tokenizer=tokenizer, max_input=100000)
     if args.local_rank != -1:
         
         train_sampler = DistributedSampler(train_set)
@@ -238,9 +291,17 @@ def main():
             num_workers=8,
             sampler=dev_sampler
         )
+        test_sampler = DistributedEvalSampler(test_set)
+        test_loader = MNLIDataLoader(
+            dataset=test_set,
+            batch_size=args.batch_size * 16 if args.dev_eval_batch_size <= 0 else args.dev_eval_batch_size,
+            shuffle=False,
+            num_workers=8,
+            sampler=test_sampler
+        )
         dist.barrier()
 
-    model = MNLIT5(args.pretrain) if not args.original_t5 else T5ForConditionalGeneration.from_pretrained(args.pretrain)
+    model = MNLIT5(args.pretrain)
 
     device = args.device
     loss_fn = nn.CrossEntropyLoss()
@@ -292,8 +353,9 @@ def main():
         optimizer_to(m_optim,device)
 
     logger.info(args)
-    train(args, model, loss_fn, m_optim, m_scheduler,  train_loader, dev_loader, device, train_sampler=train_sampler, tokenizer=tokenizer)
+    train(args, model, loss_fn, m_optim, m_scheduler,  train_loader, dev_loader,test_loader, device, train_sampler=train_sampler, tokenizer=tokenizer)
     if args.local_rank != -1:
         dist.barrier()
 if __name__ == "__main__":
     main()
+    os._exit()

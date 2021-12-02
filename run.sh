@@ -1,17 +1,17 @@
 set -ex
-export CUDA_VISIBLE_DEVICES=3,4
-LR=1e-4
+export CUDA_VISIBLE_DEVICES=0,3
+LR=2e-5
 
-MAX_STEPS=80000
+MAX_STEPS=1000
 EPOCH=6
 
-LOG_STEP=100
-EVAL_EVERY=500
+LOG_STEP=10
+EVAL_EVERY=100
 
 BATCH_SIZE=8
 
 
-pretrained_ckpt="/home/huxiaomeng/t5v11large/"
+pretrained_ckpt="t5-large"
 # pretrained_ckpt="/data/private/yushi/pretrained_models/t5-large"
 
 python -m torch.distributed.launch \
@@ -22,6 +22,7 @@ python -m torch.distributed.launch \
         -max_input 80000000  \
         -save /data/private/huxiaomeng/promptir/checkpoints/mnli/  \
         -dev /data/private/huxiaomeng/promptir/dataset/mnli/val_mismatch.jsonl   \
+        -test /data/private/
         -vocab $pretrained_ckpt          \
         -pretrain $pretrained_ckpt   \
         -res results.jsonl  \

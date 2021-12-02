@@ -4,7 +4,6 @@ import torch
 class MNLIT5(nn.Module):
     def __init__(self,checkpoint:str):
         super(MNLIT5,self).__init__()
-        # self.config=T5Config.from_pretrained(checkpoint)       
         self.t5=T5ForConditionalGeneration.from_pretrained(checkpoint)      
     
     def forward(self,input_ids,attention_mask,decoder_input_ids):
