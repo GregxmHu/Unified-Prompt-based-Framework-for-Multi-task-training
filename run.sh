@@ -18,10 +18,10 @@ python -m torch.distributed.launch \
          --nproc_per_node=2 \
          --master_port=21227  \
         train.py \
-        -train /data/private/huxiaomeng/promptir/dataset/mnli/train.jsonl  \
+        -train $dir_path/dataset/mnli/train.jsonl  \
         -max_input 80000000  \
-        -save /data/private/huxiaomeng/promptir/checkpoints/mnli/  \
-        -dev /data/private/huxiaomeng/promptir/dataset/mnli/val_mismatch.jsonl   \
+        -save $dir_path/checkpoints/mnli/  \
+        -dev $dir_path/dataset/mnli/val_mismatch.jsonl   \
         -vocab $pretrained_ckpt          \
         -pretrain $pretrained_ckpt   \
         -res results.jsonl  \
