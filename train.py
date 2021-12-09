@@ -51,7 +51,7 @@ def dev(args, model, dev_loader, device, tokenizer):
                     labels=dev_batch['labels'].to(device)
                     )
             predict=torch.argmax(batch_score,dim=1)
-            label=dev_batch['label'].to(device)
+            label=dev_batch['label_id'].to(device)
             total+=len(label)
             right+=torch.eq(predict,label).sum()
     return total, right

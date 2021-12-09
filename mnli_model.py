@@ -5,7 +5,7 @@ import numpy as np
 import torch
 import pickle
 class MNLIT5(nn.Module):
-    def __init__(self,checkpoint:str,original_t5:bool,soft_prompt:bool,prefix:str,infix:str,suffix:str):
+    def __init__(self,checkpoint:str,soft_prompt:bool,prefix:str,infix:str,suffix:str):
         super(MNLIT5,self).__init__()
         self.config=T5Config.from_pretrained(checkpoint)       
         self.t5=T5ForConditionalGeneration.from_pretrained(checkpoint,config=self.config)  
@@ -13,7 +13,6 @@ class MNLIT5(nn.Module):
         self.soft_embedding_layer=None   
         self.normal_embedding_layer=self.t5.get_input_embeddings()
         self.soft_prompt=soft_prompt
-        self.original_t5=original_t5
         if soft_prompt: 
             
             self.prefix_soft_index,self.infix_soft_index,self.suffix_soft_index=eval(prefix),eval(infix),eval(suffix)
@@ -45,7 +44,7 @@ class MNLIT5(nn.Module):
                 param.requires_grad_(False)
         
 
-    def forward(self,input_ids,attention_mask,query_ids,doc_ids,query_attention_mask,doc_attention_mask,labels):
+    def forward(self,input_ids,attention_mask,hypothesis_ids,premise_ids,hypothesis_attention_mask,premise_attention_mask,labels):
         batch_size=input_ids.shape[0]
         decoder_input_ids=torch.zeros(batch_size,1,dtype=int).to(input_ids.device)
         if self.soft_prompt:
@@ -58,12 +57,12 @@ class MNLIT5(nn.Module):
             infix_soft_embeddings=self.infix_soft_embedding_layer(infix_soft_ids)
             suffix_soft_embeddings=self.suffix_soft_embedding_layer(suffix_soft_ids)
             
-            query_embeddings=self.normal_embedding_layer(query_ids)
-            doc_embeddings=self.normal_embedding_layer(doc_ids)
+            hypothesis_embeddings=self.normal_embedding_layer(hypothesis_ids)
+            premise_embeddings=self.normal_embedding_layer(premise_ids)
             
             
             input_embeddings=torch.cat(
-                [prefix_soft_embeddings,query_embeddings,infix_soft_embeddings,doc_embeddings,suffix_soft_embeddings],
+                [prefix_soft_embeddings,hypothesis_embeddings,infix_soft_embeddings,premise_embeddings,suffix_soft_embeddings],
                 dim=1
                 )
             
@@ -72,7 +71,7 @@ class MNLIT5(nn.Module):
             suffix_soft_attention_mask=torch.ones(batch_size,self.s_num).to(input_ids.device)
             
             attention_mask=torch.cat(
-                [prefix_soft_attention_mask,query_attention_mask,infix_soft_attention_mask,doc_attention_mask,suffix_soft_attention_mask],
+                [prefix_soft_attention_mask,hypothesis_attention_mask,infix_soft_attention_mask,premise_attention_mask,suffix_soft_attention_mask],
                 dim=1
                 )
 
@@ -91,8 +90,7 @@ class MNLIT5(nn.Module):
             )
         logits=output.logits
         batch_score=logits[:,0,[1176,7163,6136]]
-        batch_loss=None
-        return batch_score,batch_loss
+        return batch_score
 
     
     
