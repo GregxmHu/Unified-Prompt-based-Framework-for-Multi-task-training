@@ -16,7 +16,7 @@ class MNLIDataset(Dataset):
         template,
         max_input: int = 1280000,
     ) -> None:
-        self._label_mapping = ['entailment', 'neutral', 'contradiction']
+        self._label_mapping = ['true', 'neutral', 'false']
         #self._label_mapping=['false','true']
         #对应[1176,7163,6136]
         self._dataset = dataset
@@ -35,7 +35,7 @@ class MNLIDataset(Dataset):
 
     def __getitem__(self, index: int) -> Dict[str, Any]:
         example = self._examples[index]
-        #text='mnli hypothesis: ' + example["hypothesis"] + ' premise: ' + example["premise"]
+        #text='mnli hypothesis: ' + example["hypothesis"] + ' premise: ' + example["premise"]+' entailment: ' 
         text = self._template.replace("<h>", example["hypothesis"]).replace("<p>", example['premise'])
         hypothesis_tokenized=self._tokenizer(example['hypothesis'], padding="max_length", truncation=True, max_length=200)
         premise_tokenized=self._tokenizer(example['premise'],  padding="max_length", truncation=True, max_length=200)

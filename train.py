@@ -33,26 +33,6 @@ import json
 import os
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
-def test(args, model, test_loader, device, tokenizer):
-    total=0
-    right=0
-    for test_batch in tqdm(test_loader, disable=args.local_rank not in [-1, 0]):
-        #hypothesis_id, premise_id, label= test_batch[''], test_batch['premise_id'], test_batch['label']
-        with torch.no_grad():
-            batch_score = model(
-                    input_ids=test_batch['input_ids'].to(device), 
-                    attention_mask=test_batch['attention_mask'].to(device),
-                    hypothesis_ids=test_batch['hypothesis_ids'].to(device), 
-                    premise_ids=test_batch['premise_ids'].to(device),
-                    hypothesis_attention_mask=test_batch['hypothesis_attention_mask'].to(device),
-                    premise_attention_mask=test_batch['premise_attention_mask'].to(device),
-                    labels=test_batch['labels'].to(device)
-                    )
-            predict=torch.argmax(batch_score,dim=1)
-            label=test_batch['label'].to(device)
-            total+=len(label)
-            right+=torch.eq(predict,label).sum()
-    return total, right
 
 
 def dev(args, model, dev_loader, device, tokenizer):
@@ -84,7 +64,7 @@ def batch_to_device(batch, device):
     return device_batch
             
 
-def train(args, model, loss_fn, m_optim, m_scheduler, train_loader, dev_loader, test_loader,device, train_sampler=None, tokenizer=None):
+def train(args, model, loss_fn, m_optim, m_scheduler, train_loader, dev_loader, device, train_sampler=None, tokenizer=None):
     best_mes = 0.0
     global_step = 0 # steps that outside epoches
     force_break = False
@@ -161,16 +141,10 @@ def train(args, model, loss_fn, m_optim, m_scheduler, train_loader, dev_loader, 
                                 os.makedirs(args.save)
                         if mes>best_mes:
                             best_mes=mes
-                            ls=os.listdir(args.save)
-                            for i in ls:
-                                item_path=os.path.join(args.save,i)
-                                logger.info('remove_model at step {}'.format(global_step+1))
-                                logger.info('save model')
-                                os.remove(item_path)
-                            if hasattr(model, "module"):
-                                torch.save(model.module.state_dict(), args.save + "_step-{}.bin".format(global_step+1))
-                            else:
-                                torch.save(model.state_dict(), args.save + "_step-{}.bin".format(global_step+1))
+                        if hasattr(model, "module"):
+                            torch.save(model.module.state_dict(), args.save + "_step-{}.bin".format(global_step+1))
+                        else:
+                            torch.save(model.state_dict(), args.save + "_step-{}.bin".format(global_step+1))
                         logger.info("global step: {}, messure: {}, best messure: {}".format(global_step+1, mes, best_mes))
                 
                 global_step += 1
@@ -188,48 +162,6 @@ def train(args, model, loss_fn, m_optim, m_scheduler, train_loader, dev_loader, 
             break
     if args.local_rank != -1:
         dist.barrier()
-        logger.info("load best checkpoint....")
-        dist.barrier()
-        for file in os.listdir(args.save):
-            checkpoint=os.path.join(args.save,file)
-            state=torch.load(checkpoint,map_location=device)
-            model.module.load_state_dict(state)
-        dist.barrier()
-    else:
-        logger.info("load best checkpoint....")
-        for file in os.listdir(args.save):
-            checkpoint=os.path.join(args.save,file)
-            state=torch.load(checkpoint,map_location=device)
-            model.load_state_dict(state)
-    logger.info("doing inference.... at gpu:{}".format(args.local_rank))
-    model.eval()
-    if args.local_rank != -1:
-        dist.barrier()
-    with torch.no_grad():
-        total,right = test(args, model,test_loader, device,tokenizer=tokenizer)
-    if args.local_rank != -1:
-        logger.info("inference finished...at gpu:{}".format(args.local_rank))
-        dist.barrier()
-    else:
-        logger.info("inference finished...")
-    with open(args.res,'a+') as f:
-        f.write(json.dumps({'total':total,'right':right}))
-        f.write('\n')
-    if args.local_rank != -1:
-        dist.barrier()
-    if args.local_rank in [-1,0]:
-        with open(args.res,'r') as f:
-            r,t=0,0
-            for line in f:
-                r+=eval(line)['right']
-                t+=eval(line)['total']
-                print(r,t)
-            mes=r/t
-            print("test_acc:{}".format(mes))
-    if args.local_rank !=-1:
-        dist.barrier()
-    dist.barrier()
-
     return 
 
 def set_seed(seed):
@@ -243,14 +175,12 @@ def main():
     parser.add_argument('-optimizer', type=str, default='adam')
     parser.add_argument('-train', type=str, default='./data/train_toy.jsonl')
     parser.add_argument('-dev', type=str, default='./data/dev_toy.jsonl')
-    parser.add_argument('-test', type=str, default='./data/dev_toy.jsonl')
     parser.add_argument('-max_input', type=int, default=1280000)
     parser.add_argument('-save', type=str, default='./checkpoints/bert.bin')
     parser.add_argument('-vocab', type=str, default='allenai/scibert_scivocab_uncased')
     parser.add_argument('-pretrain', type=str, default='allenai/scibert_scivocab_uncased')
     parser.add_argument('-checkpoint', type=str, default=None)
     parser.add_argument('-res', type=str, default='./results/bert.trec')
-    parser.add_argument('-test_res', type=str, default='./results/bert.trec')
     parser.add_argument('-epoch', type=int, default=1)
     parser.add_argument('-batch_size', type=int, default=8)
     parser.add_argument('-dev_eval_batch_size', type=int, default=128)
@@ -288,9 +218,7 @@ def main():
     logger.info('reading training data...')
     train_set=MNLIDataset(dataset=args.train,tokenizer=tokenizer,template=args.template)
     logger.info('reading dev data...')
-    dev_set=MNLIDataset(dataset=args.dev,tokenizer=tokenizer, max_input=2000,template=args.template)
-    logger.info('reading test data...')
-    test_set=MNLIDataset(dataset=args.tset,tokenizer=tokenizer, max_input=100000,template=args.template)
+    dev_set=MNLIDataset(dataset=args.dev,tokenizer=tokenizer,template=args.template)
     if args.local_rank != -1:
         
         train_sampler = DistributedSampler(train_set)
@@ -309,14 +237,7 @@ def main():
             num_workers=8,
             sampler=dev_sampler
         )
-        test_sampler = DistributedEvalSampler(test_set)
-        test_loader = MNLIDataLoader(
-            dataset=test_set,
-            batch_size=args.batch_size * 16 if args.dev_eval_batch_size <= 0 else args.dev_eval_batch_size,
-            shuffle=False,
-            num_workers=8,
-            sampler=test_sampler
-        )
+
         dist.barrier()
 
     model = MNLIT5(args.pretrain,args.soft_prompt,args.prefix,args.infix,args.suffix)
@@ -371,7 +292,7 @@ def main():
         optimizer_to(m_optim,device)
 
     logger.info(args)
-    train(args, model, loss_fn, m_optim, m_scheduler,  train_loader, dev_loader,test_loader, device, train_sampler=train_sampler, tokenizer=tokenizer)
+    train(args, model, loss_fn, m_optim, m_scheduler,  train_loader, dev_loader,device, train_sampler=train_sampler, tokenizer=tokenizer)
     if args.local_rank != -1:
         dist.barrier()
 if __name__ == "__main__":
