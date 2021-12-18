@@ -6,7 +6,7 @@ MAX_STEPS=20000
 EPOCH=10000000
 
 LOG_STEP=100
-EVAL_EVERY=1000
+EVAL_EVERY=100
 
 BATCH_SIZE=4
 #checkpoints="/data/private/huxiaomeng/checkpoints/mnli/_step-12000.bin"

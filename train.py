@@ -42,7 +42,7 @@ def dev(args, model, dev_loader, device, tokenizer):
         #hypothesis_id, premise_id, label= dev_batch[''], dev_batch['premise_id'], dev_batch['label']
         with torch.no_grad():
             if args.original_t5:
-                output_sequences = model.t5.module.generate(
+                output_sequences = model.module.t5.generate(
                     input_ids=dev_batch['input_ids'].to(device),
                     attention_mask=dev_batch['attention_mask'].to(device),
                     do_sample=False, # disable sampling to test if batching affects output
