@@ -41,19 +41,33 @@ def dev(args, model, dev_loader, device, tokenizer):
     for dev_batch in tqdm(dev_loader, disable=args.local_rank not in [-1, 0]):
         #hypothesis_id, premise_id, label= dev_batch[''], dev_batch['premise_id'], dev_batch['label']
         with torch.no_grad():
-            batch_score = model(
-                    input_ids=dev_batch['input_ids'].to(device), 
+            if args.original_t5:
+                output_sequences = model.t5.module.generate(
+                    input_ids=dev_batch['input_ids'].to(device),
                     attention_mask=dev_batch['attention_mask'].to(device),
-                    hypothesis_ids=dev_batch['hypothesis_ids'].to(device), 
-                    premise_ids=dev_batch['premise_ids'].to(device),
-                    hypothesis_attention_mask=dev_batch['hypothesis_attention_mask'].to(device),
-                    premise_attention_mask=dev_batch['premise_attention_mask'].to(device),
-                    labels=dev_batch['labels'].to(device)
-                    )
-            predict=torch.argmax(batch_score,dim=1)
-            label=dev_batch['label_id'].to(device)
-            total+=len(label)
-            right+=torch.eq(predict,label).sum()
+                    do_sample=False, # disable sampling to test if batching affects output
+                )
+                batch_result = tokenizer.batch_decode(output_sequences, skip_special_tokens=True)
+                # print(batch_result)
+                true_result = dev_batch["raw_label"]
+                total += len(true_result)
+                for br, tr in zip(batch_result, true_result):
+                    if br == tr:
+                        right += 1
+            else:
+                batch_score = model(
+                        input_ids=dev_batch['input_ids'].to(device), 
+                        attention_mask=dev_batch['attention_mask'].to(device),
+                        hypothesis_ids=dev_batch['hypothesis_ids'].to(device), 
+                        premise_ids=dev_batch['premise_ids'].to(device),
+                        hypothesis_attention_mask=dev_batch['hypothesis_attention_mask'].to(device),
+                        premise_attention_mask=dev_batch['premise_attention_mask'].to(device),
+                        labels=dev_batch['labels'].to(device)
+                        )
+                predict=torch.argmax(batch_score,dim=1)
+                label=dev_batch['label_id'].to(device)
+                total+=len(label)
+                right+=torch.eq(predict,label).sum()
     return total, right
 
 
@@ -78,7 +92,7 @@ def train(args, model, loss_fn, m_optim, m_scheduler, train_loader, dev_loader, 
             # print("Before: global step {}, rank {}".format(global_step, args.local_rank))
             sync_context = model.no_sync if (args.local_rank != -1 and (step+1) % args.gradient_accumulation_steps != 0) else nullcontext
             with sync_context():
-                batch_score = model(
+                batch_score,batch_loss = model(
                     input_ids=train_batch['input_ids'].to(device), 
                     attention_mask=train_batch['attention_mask'].to(device),
                     hypothesis_ids=train_batch['hypothesis_ids'].to(device), 
@@ -88,7 +102,8 @@ def train(args, model, loss_fn, m_optim, m_scheduler, train_loader, dev_loader, 
                     labels=train_batch['labels'].to(device)
                     )
             with sync_context():
-                batch_loss = loss_fn(batch_score, train_batch['label_id'].to(device))
+                if batch_loss is None:
+                    batch_loss = loss_fn(batch_score, train_batch['label_id'].to(device))
 
             if args.n_gpu > 1:
                 batch_loss = batch_loss.mean()
@@ -205,6 +220,7 @@ def main():
     parser.add_argument("--infix",type=str,default=None)
     parser.add_argument("--suffix",type=str,default=None)
     parser.add_argument("--prefix",type=str,default=None)
+    parser.add_argument("--original_t5", action="store_true")
     args = parser.parse_args()
     set_seed(13)
     set_dist_args(args) # get local cpu/gpu device
@@ -216,9 +232,9 @@ def main():
 
     tokenizer = T5Tokenizer.from_pretrained(args.vocab)
     logger.info('reading training data...')
-    train_set=MNLIDataset(dataset=args.train,tokenizer=tokenizer,template=args.template)
+    train_set=MNLIDataset(original_t5=args.original_t5,dataset=args.train,tokenizer=tokenizer,template=args.template)
     logger.info('reading dev data...')
-    dev_set=MNLIDataset(dataset=args.dev,tokenizer=tokenizer,template=args.template)
+    dev_set=MNLIDataset(original_t5=args.original_t5,dataset=args.dev,tokenizer=tokenizer,template=args.template)
     if args.local_rank != -1:
         
         train_sampler = DistributedSampler(train_set)
@@ -240,11 +256,14 @@ def main():
 
         dist.barrier()
 
-    model = MNLIT5(args.pretrain,args.soft_prompt,args.prefix,args.infix,args.suffix)
+    model = MNLIT5(args.original_t5,args.pretrain,args.soft_prompt,args.prefix,args.infix,args.suffix)
 
     device = args.device
     loss_fn = nn.CrossEntropyLoss()
     model.to(device)
+    if args.checkpoint is not None:
+        st=torch.load(args.checkpoint,map_location=device)
+        model.load_state_dict(st)
     loss_fn.to(device)
     if args.n_gpu > 1:
         model = nn.DataParallel(model)
@@ -297,4 +316,4 @@ def main():
         dist.barrier()
 if __name__ == "__main__":
     main()
-    os._exit()
+    os._exit(0)

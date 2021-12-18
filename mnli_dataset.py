@@ -15,10 +15,16 @@ class MNLIDataset(Dataset):
         tokenizer: T5Tokenizer,
         template,
         max_input: int = 1280000,
+        original_t5:bool=False
     ) -> None:
-        self._label_mapping = ['true', 'neutral', 'false']
+        if not original_t5:
+            self._label_mapping = ['true', 'neutral', 'false']
+        else:
+            self._label_mapping = ['entailment', 'neutral', 'contradiction']
         #self._label_mapping=['false','true']
         #对应[1176,7163,6136]
+        #print(self._label_mapping)
+        self._original_t5=original_t5
         self._dataset = dataset
         self._tokenizer = tokenizer
         self._max_input = max_input
@@ -36,7 +42,10 @@ class MNLIDataset(Dataset):
     def __getitem__(self, index: int) -> Dict[str, Any]:
         example = self._examples[index]
         #text='mnli hypothesis: ' + example["hypothesis"] + ' premise: ' + example["premise"]+' entailment: ' 
-        text = self._template.replace("<h>", example["hypothesis"]).replace("<p>", example['premise'])
+        if self._original_t5:
+            text='mnli hypothesis: ' + example["hypothesis"] + ' premise: ' + example["premise"]
+        else:
+            text = self._template.replace("<h>", example["hypothesis"]).replace("<p>", example['premise'])
         hypothesis_tokenized=self._tokenizer(example['hypothesis'], padding="max_length", truncation=True, max_length=200)
         premise_tokenized=self._tokenizer(example['premise'],  padding="max_length", truncation=True, max_length=200)
         hypothesis_ids,hypothesis_attention_mask=hypothesis_tokenized['input_ids'][:-1],hypothesis_tokenized['attention_mask'][:-1]
