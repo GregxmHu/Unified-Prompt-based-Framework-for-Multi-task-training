@@ -48,6 +48,7 @@ def dev(args, model, dev_loader, device, tokenizer):
                     do_sample=False, # disable sampling to test if batching affects output
                 )
                 batch_result = tokenizer.batch_decode(output_sequences, skip_special_tokens=True)
+                #print(batch_result)
                 # print(batch_result)
                 true_result = dev_batch["raw_label"]
                 total += len(true_result)
@@ -151,6 +152,8 @@ def train(args, model, loss_fn, m_optim, m_scheduler, train_loader, dev_loader, 
                                 t+=eval(line)['total']
                                 print(r,t)
                             mes=r/t
+                        if args.tb is not None:
+                            args.tb.add_scalar("dev_acc", mes, global_step + 1)
                         os.remove(args.res)#logger.info('save_model at step {}'.format(global_step+1))
                         if not os.path.exists(args.save):
                                 os.makedirs(args.save)

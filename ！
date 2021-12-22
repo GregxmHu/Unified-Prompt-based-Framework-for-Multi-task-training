@@ -1,0 +1,15 @@
+cd ~/new/OpenMatch
+bash commands/t5.sh 1000
+bash commands/t5.sh 2000
+bash commands/t5.sh 4000
+bash commands/t5.sh 5000
+bash commands/t5.sh 6000
+bash commands/t5.sh 7000
+bash commands/t5.sh 8000
+bash commands/t5.sh 9000
+bash commands/t5.sh 10000
+bash commands/t5.sh 11000
+bash commands/t5.sh 12000
+bash commands/t5.sh 13000
+bash commands/t5.sh 14000
+bash commands/t5.sh 15000

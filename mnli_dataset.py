@@ -20,7 +20,8 @@ class MNLIDataset(Dataset):
         if not original_t5:
             self._label_mapping = ['true', 'neutral', 'false']
         else:
-            self._label_mapping = ['entailment', 'neutral', 'contradiction']
+            self._mnli_label_mapping = ['entailment', 'neutral', 'contradiction']
+            self._nq_label_mapping=['unanswered','answered']
         #self._label_mapping=['false','true']
         #对应[1176,7163,6136]
         #print(self._label_mapping)
@@ -30,7 +31,7 @@ class MNLIDataset(Dataset):
         self._max_input = max_input
         self._template=template
         with open(self._dataset,'r') as f:
-            self._examples=[eval(line) for line in f]        
+            self._examples=[eval(line) for line in f][:max_input]        
 
     # def __getitem__(self, index: int) -> Dict[str, Any]:
     #     example = self._examples[index]
@@ -43,25 +44,36 @@ class MNLIDataset(Dataset):
         example = self._examples[index]
         #text='mnli hypothesis: ' + example["hypothesis"] + ' premise: ' + example["premise"]+' entailment: ' 
         if self._original_t5:
-            text='mnli hypothesis: ' + example["hypothesis"] + ' premise: ' + example["premise"]
+            if example['task']=='mnli':
+                text='mnli hypothesis: ' + example["hypothesis"] + ' premise: ' + example["premise"]
+                label_mapping=self._mnli_label_mapping
+            elif example['task']=='nq':
+                label_mapping=self._nq_label_mapping
+                text='NQ Question: '+example['query']+' Document: '+example['doc']
         else:
             text = self._template.replace("<h>", example["hypothesis"]).replace("<p>", example['premise'])
-        hypothesis_tokenized=self._tokenizer(example['hypothesis'], padding="max_length", truncation=True, max_length=200)
-        premise_tokenized=self._tokenizer(example['premise'],  padding="max_length", truncation=True, max_length=200)
-        hypothesis_ids,hypothesis_attention_mask=hypothesis_tokenized['input_ids'][:-1],hypothesis_tokenized['attention_mask'][:-1]
-        premise_ids,premise_attention_mask=premise_tokenized['input_ids'][:-1],premise_tokenized['attention_mask'][:-1]
+        if example['task']=='mnli':
+            hypothesis_tokenized=self._tokenizer(example['hypothesis'], padding="max_length", truncation=True, max_length=200)
+            premise_tokenized=self._tokenizer(example['premise'],  padding="max_length", truncation=True, max_length=200)
+            hypothesis_ids,hypothesis_attention_mask=hypothesis_tokenized['input_ids'][:-1],hypothesis_tokenized['attention_mask'][:-1]
+            premise_ids,premise_attention_mask=premise_tokenized['input_ids'][:-1],premise_tokenized['attention_mask'][:-1]
+        else:
+            hypothesis_tokenized=self._tokenizer(example['query'], padding="max_length", truncation=True, max_length=200)
+            premise_tokenized=self._tokenizer(example['doc'],  padding="max_length", truncation=True, max_length=200)
+            hypothesis_ids,hypothesis_attention_mask=hypothesis_tokenized['input_ids'][:-1],hypothesis_tokenized['attention_mask'][:-1]
+            premise_ids,premise_attention_mask=premise_tokenized['input_ids'][:-1],premise_tokenized['attention_mask'][:-1]
         #hypothesis_ids=self._tokenizer(example['hypothesis'],padding="max_length", truncation=True, max_length=50)['input_ids'][:-1]
         #self._tokenizer(example['hypothesis'],padding="max_length", truncation=True, max_length=50)['attention_mask'][:-1]
         #premise_ids=self._tokenizer(example['premise'],padding="max_length", truncation=True, max_length=320)['input_ids'][:-1]
         #text='hypothesis: ' + example["hypothesis"] + ' premiseument: ' + example["premise"]+" Relevant: "
         tokenized = self._tokenizer(text, padding="max_length", truncation=True, max_length=512)
         source_ids, source_mask = tokenized["input_ids"], tokenized["attention_mask"]
-        tokenized = self._tokenizer(self._label_mapping[example["label"]], padding="max_length", truncation=True, max_length=2)
+        tokenized = self._tokenizer(label_mapping[example["label"]], padding="max_length", truncation=True, max_length=10)
         target_ids = tokenized["input_ids"]
         target_ids = [
            (label if label != self._tokenizer.pad_token_id else -100) for label in target_ids
         ]
-        raw_label = self._label_mapping[example["label"]]
+        raw_label = label_mapping[example["label"]]
         output = {
             "input_ids": source_ids,
             "attention_mask": source_mask,
