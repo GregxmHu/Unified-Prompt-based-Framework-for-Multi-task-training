@@ -20,8 +20,8 @@ class MNLIDataset(Dataset):
         if not original_t5:
             self._label_mapping = ['true', 'neutral', 'false']
         else:
-            self._mnli_label_mapping = ['entailment', 'neutral', 'contradiction']
-            self._nq_label_mapping=['unanswered','answered']
+            self._mnli_label_mapping = ['true', 'neutral', 'false']
+            self._nq_label_mapping=['false','true']
         #self._label_mapping=['false','true']
         #对应[1176,7163,6136]
         #print(self._label_mapping)
@@ -45,21 +45,22 @@ class MNLIDataset(Dataset):
         #text='mnli hypothesis: ' + example["hypothesis"] + ' premise: ' + example["premise"]+' entailment: ' 
         if self._original_t5:
             if example['task']=='mnli':
-                text='mnli hypothesis: ' + example["hypothesis"] + ' premise: ' + example["premise"]
+                text='mnli hypothesis: ' + example["hypothesis"] + ' premise: ' + example["premise"]+" entailment: "
                 label_mapping=self._mnli_label_mapping
             elif example['task']=='nq':
                 label_mapping=self._nq_label_mapping
-                text='NQ Question: '+example['query']+' Document: '+example['doc']
+                text='NQ Question: '+example['query']+' Document: '+example['doc']+" answered: "
         else:
             text = self._template.replace("<h>", example["hypothesis"]).replace("<p>", example['premise'])
+        #print(text)
         if example['task']=='mnli':
             hypothesis_tokenized=self._tokenizer(example['hypothesis'], padding="max_length", truncation=True, max_length=200)
             premise_tokenized=self._tokenizer(example['premise'],  padding="max_length", truncation=True, max_length=200)
             hypothesis_ids,hypothesis_attention_mask=hypothesis_tokenized['input_ids'][:-1],hypothesis_tokenized['attention_mask'][:-1]
             premise_ids,premise_attention_mask=premise_tokenized['input_ids'][:-1],premise_tokenized['attention_mask'][:-1]
         else:
-            hypothesis_tokenized=self._tokenizer(example['query'], padding="max_length", truncation=True, max_length=200)
-            premise_tokenized=self._tokenizer(example['doc'],  padding="max_length", truncation=True, max_length=200)
+            hypothesis_tokenized=self._tokenizer(example['doc'], padding="max_length", truncation=True, max_length=200)
+            premise_tokenized=self._tokenizer(example['query'],  padding="max_length", truncation=True, max_length=200)
             hypothesis_ids,hypothesis_attention_mask=hypothesis_tokenized['input_ids'][:-1],hypothesis_tokenized['attention_mask'][:-1]
             premise_ids,premise_attention_mask=premise_tokenized['input_ids'][:-1],premise_tokenized['attention_mask'][:-1]
         #hypothesis_ids=self._tokenizer(example['hypothesis'],padding="max_length", truncation=True, max_length=50)['input_ids'][:-1]
