@@ -1,2 +1,3 @@
-# MNLIT5-Prompt-Tuning-
-Prompt Tuning For MNLI (based T5)
+# T5-Prompt-Tuning-
+* A framework of Prompt Tuning For Multi-NLP-Tasks. (based T5)
+* Supports both Hard prompt and Soft prompt (only tune the soft token's embedding matrix)
